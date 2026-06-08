@@ -350,6 +350,28 @@ BitTorrent::LoadResumeDataResult BitTorrent::BencodeResumeDataStorage::loadTorre
         {
             return nonstd::make_unexpected(tr("Mismatching info-hash detected in resume data"));
         }
+#if LIBTORRENT_VERSION_NUM >= 20100
+        const lt::file_storage &original = p.ti->layout();
+        const lt::file_storage &deduped = p.ti->files_impl();
+#else
+        const lt::file_storage &original = p.ti->orig_files();
+        const lt::file_storage &deduped = p.ti->files();
+#endif
+        // fixes "Missing Files" errors caused by libtorrent filename deduplication
+        if (&original != &deduped)
+        {
+            for (const lt::file_index_t file_index : original.file_range())
+            {
+                if (original.pad_file_at(file_index)) continue;
+                if (original.file_name(file_index) == deduped.file_name(file_index)) continue;
+                const auto it = p.renamed_files.lower_bound(file_index);
+                if (it == p.renamed_files.cend() || file_index < it->first)
+                {
+                    std::string original_path = original.file_path(file_index);
+                    p.renamed_files.emplace_hint(it, file_index, std::move(original_path));
+                }
+            }
+        }
     }
 
     p.save_path = Profile::instance()->fromPortablePath(
